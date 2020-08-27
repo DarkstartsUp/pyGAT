@@ -21,7 +21,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--no-cuda', action='store_true', default=False, help='Disables CUDA training.')
 parser.add_argument('--fastmode', action='store_true', default=False, help='Validate during training pass.')
 parser.add_argument('--sparse', action='store_true', default=False, help='GAT with sparse version or not.')
-parser.add_argument('--seed', type=int, default=72, help='Random seed.')
+parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--epochs', type=int, default=10000, help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.005, help='Initial learning rate.')
 parser.add_argument('--weight_decay', type=float, default=5e-4, help='Weight decay (L2 loss on parameters).')
@@ -41,6 +41,15 @@ if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
 # Load data
+'''
+shapes:
+torch.Size([2708, 2708])
+torch.Size([2708, 1433])
+torch.Size([2708])
+torch.Size([140])
+torch.Size([300])
+torch.Size([1000])
+'''
 adj, features, labels, idx_train, idx_val, idx_test = load_data()
 
 # Model and optimizer
@@ -75,9 +84,13 @@ features, adj, labels = Variable(features), Variable(adj), Variable(labels)
 
 
 def train(epoch):
+    """
+    Run at each epoch.
+    """
     t = time.time()
-    model.train()
+    model.train()  # dropout is enabled under train mode
     optimizer.zero_grad()
+    # output: [batch_size, log(softmax(x))]
     output = model(features, adj)
     loss_train = F.nll_loss(output[idx_train], labels[idx_train])
     acc_train = accuracy(output[idx_train], labels[idx_train])
@@ -108,8 +121,8 @@ def compute_test():
     loss_test = F.nll_loss(output[idx_test], labels[idx_test])
     acc_test = accuracy(output[idx_test], labels[idx_test])
     print("Test set results:",
-          "loss= {:.4f}".format(loss_test.data[0]),
-          "accuracy= {:.4f}".format(acc_test.data[0]))
+          "loss= {:.4f}".format(loss_test.data.item()),
+          "accuracy= {:.4f}".format(acc_test.data.item()))
 
 # Train model
 t_total = time.time()
@@ -120,7 +133,7 @@ best_epoch = 0
 for epoch in range(args.epochs):
     loss_values.append(train(epoch))
 
-    torch.save(model.state_dict(), '{}.pkl'.format(epoch))
+    torch.save(model.state_dict(), 'ckpts/{}.pkl'.format(epoch))
     if loss_values[-1] < best:
         best = loss_values[-1]
         best_epoch = epoch
@@ -131,15 +144,15 @@ for epoch in range(args.epochs):
     if bad_counter == args.patience:
         break
 
-    files = glob.glob('*.pkl')
+    files = glob.glob('ckpts/*.pkl')
     for file in files:
-        epoch_nb = int(file.split('.')[0])
+        epoch_nb = int(file.split('/')[1].split('.')[0])
         if epoch_nb < best_epoch:
             os.remove(file)
 
-files = glob.glob('*.pkl')
+files = glob.glob('ckpts/*.pkl')
 for file in files:
-    epoch_nb = int(file.split('.')[0])
+    epoch_nb = int(file.split('/')[1].split('.')[0])
     if epoch_nb > best_epoch:
         os.remove(file)
 
@@ -148,7 +161,7 @@ print("Total time elapsed: {:.4f}s".format(time.time() - t_total))
 
 # Restore best model
 print('Loading {}th epoch'.format(best_epoch))
-model.load_state_dict(torch.load('{}.pkl'.format(best_epoch)))
+model.load_state_dict(torch.load('ckpts/{}.pkl'.format(best_epoch)))
 
 # Testing
 compute_test()

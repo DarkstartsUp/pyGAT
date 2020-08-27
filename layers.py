@@ -24,23 +24,34 @@ class GraphAttentionLayer(nn.Module):
 
         self.leakyrelu = nn.LeakyReLU(self.alpha)
 
-    def forward(self, input, adj):
-        h = torch.mm(input, self.W)
-        N = h.size()[0]
+        if not self.concat:
+            self.sigmoid = nn.Sigmoid()
 
+    def forward(self, input, adj, return_att=False):
+        # initial step: a shared linear transformation. The size of h: (N_samples, out_features)
+        h = torch.mm(input, self.W)
+        N = h.size()[0]       # node number
+
+        # a_input: (N_samples, N_samples, 2*out_features)
         a_input = torch.cat([h.repeat(1, N).view(N * N, -1), h.repeat(N, 1)], dim=1).view(N, -1, 2 * self.out_features)
-        e = self.leakyrelu(torch.matmul(a_input, self.a).squeeze(2))
+        e = self.leakyrelu(torch.matmul(a_input, self.a).squeeze(2))   # (N_samples, N_samples)
 
         zero_vec = -9e15*torch.ones_like(e)
+        # return a tensor of elements selected from either e or zero_vec, depending on adj
         attention = torch.where(adj > 0, e, zero_vec)
-        attention = F.softmax(attention, dim=1)
-        attention = F.dropout(attention, self.dropout, training=self.training)
+        # softmax on each node's all neighborhoods
+        if self.concat:
+            attention = F.softmax(attention, dim=1)    # re-scale so that the elements lie in the range [0, 1] and sum to 1.
+        else:
+            attention = self.sigmoid(attention)
+        # attention = F.dropout(attention, self.dropout, training=self.training)    # (N_samples, N_samples)
         h_prime = torch.matmul(attention, h)
 
+        # return size: (N_samples, out_features)
         if self.concat:
-            return F.elu(h_prime)
+            return F.elu(h_prime) if not return_att else (F.elu(h_prime), attention)
         else:
-            return h_prime
+            return h_prime if not return_att else (h_prime, attention)
 
     def __repr__(self):
         return self.__class__.__name__ + ' (' + str(self.in_features) + ' -> ' + str(self.out_features) + ')'
@@ -137,3 +148,15 @@ class SpGraphAttentionLayer(nn.Module):
 
     def __repr__(self):
         return self.__class__.__name__ + ' (' + str(self.in_features) + ' -> ' + str(self.out_features) + ')'
+
+
+# if __name__ == '__main__':
+#     # 6 samples
+#     input = torch.randn(6, 10)
+#     adj = torch.zeros((6, 6), dtype=torch.int8)
+#     for i in range(6):
+#         for j in range(6):
+#             if torch.randn(1)[0] > 0.2:
+#                 adj[i][j] = 1
+#     attention = GraphAttentionLayer(10, 8, dropout=0.6, alpha=0.2, concat=True)
+#     attention(input, adj)
